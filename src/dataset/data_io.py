@@ -21,13 +21,14 @@ def get_patients_data(base_folder: Path,
     patient_meta = []
     for patient_dir in patient_dirs:
         patient_id = patient_dir.name
+        mgmt_val = mgmt_vals.loc[patient_id] if mgmt_vals is not None else None
         patient = Patient(
             id=patient_id,
             T1w_path=patient_dir / 'T1w',
             T1wCE_path=patient_dir / 'T1wCE',
             T2w=patient_dir / 'T2w',
             FLAIR_path=patient_dir / 'FLAIR',
-            mgmt_val=mgmt_vals.loc[patient_id] if mgmt_vals else None
+            mgmt_val=mgmt_val
         )
         patient_meta.append(patient)
     return patient_meta
