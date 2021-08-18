@@ -12,7 +12,6 @@ from src.dataset.data_io import get_patients_data, get_patient_slice_paths
 from src.dataset.dataset_util import get_base_folder, get_patient_dirs
 from src.dataset.image_utils import pad_or_crop_image, \
     normalize
-from src.dataset.metadata import get_meta
 from src.dataset.patient import Patient
 
 IMAGING_PLANES = ('axial', 'coronal', 'sagittal')
@@ -135,8 +134,13 @@ class Brats(Dataset):
         return len(self._patient_data) if not self.debug else 3
 
 
-def get_datasets(seed, debug=False, train_val_split=False, test=False,
-                 fold_number=0, normalisation="minmax",
+def get_datasets(seed,
+                 patient_meta: pd.DataFrame,
+                 debug=False,
+                 train_val_split=False,
+                 test=False,
+                 fold_number=0,
+                 normalisation="minmax",
                  limit_to_imaging_plane: Optional[str] = None,
                  limit_to_series_types: Optional[Tuple[str]] = None):
     if train_val_split and test:
@@ -147,8 +151,6 @@ def get_datasets(seed, debug=False, train_val_split=False, test=False,
     base_folder = get_base_folder(
         dataset_type=dataset_type)
     patient_dirs = get_patient_dirs(base_folder=base_folder)
-    patient_meta = get_meta(path=base_folder / dataset_type,
-                            dataset=dataset_type)
 
     def _filter_to_imaging_plane(imaging_plane: str, patient_dirs: List[Path]):
         if imaging_plane not in IMAGING_PLANES:
