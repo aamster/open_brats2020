@@ -45,31 +45,35 @@ def get_crop_slice(target_size, dim):
         return slice(0, dim)
 
 
-def normalize(image):
-    """Basic min max scaler.
-    """
-    min_ = np.min(image)
-    max_ = np.max(image)
-    scale = max_ - min_
-    image = (image - min_) / scale
-    return image
+def normalize(sequence, how='minmax'):
+    def _minmax(sequence):
+        min_ = np.min(sequence)
+        max_ = np.max(sequence)
+        scale = max_ - min_
+        sequence = (sequence - min_) / scale
+        return sequence
+
+    def _zscore(sequence: np.ndarray):
+        non_zeros = sequence > 0
+        mean = np.mean(sequence[non_zeros])
+        std = np.std(sequence[non_zeros])
+
+        return (sequence - mean) / std
+
+    if how == 'minmax':
+        sequence = _minmax(sequence=sequence)
+    elif how == 'zscore':
+        sequence = _zscore(sequence=sequence)
+    else:
+        raise ValueError(f'Normalize func must be in {possible_funcs}')
+    return sequence
 
 
-def irm_min_max_preprocess(image, low_perc=1, high_perc=99):
-    """Main pre-processing function used for the challenge (seems to work the best).
-
-    Remove outliers voxels first, then min-max scale.
-
-    Warnings
-    --------
-    This will not do it channel wise!!
-    """
-
-    non_zeros = image > 0
-    low, high = np.percentile(image[non_zeros], [low_perc, high_perc])
-    image = np.clip(image, low, high)
-    image = normalize(image)
-    return image
+def normalize_contrast(sequence: np.ndarray, low_perc=1, high_perc=99):
+    non_zeros = sequence > 0
+    low, high = np.percentile(sequence[non_zeros], [low_perc, high_perc])
+    sequence = np.clip(sequence, low, high)
+    return sequence
 
 
 def zscore_normalise(img: np.ndarray) -> np.ndarray:

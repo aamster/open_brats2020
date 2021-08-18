@@ -1,119 +1,207 @@
-import pathlib
+from typing import List, Optional, Tuple
 
-import SimpleITK as sitk
+import pandas as pd
+from pathlib import Path
+
 import numpy as np
-import torch
 from sklearn.model_selection import KFold
 from torch.utils.data.dataset import Dataset
+from skimage import io
 
-from src.config import get_brats_folder
-from src.dataset.image_utils import pad_or_crop_image, irm_min_max_preprocess, zscore_normalise
+from src.dataset.data_io import get_patients_data, get_patient_slice_paths
+from src.dataset.dataset_util import get_base_folder, get_patient_dirs
+from src.dataset.image_utils import pad_or_crop_image, \
+    normalize
+from src.dataset.metadata import get_meta
+from src.dataset.patient import Patient
+
+IMAGING_PLANES = ('axial', 'coronal', 'sagittal')
+SEQUENCE_TYPES = ('T1w', 'T1wCE', 'FLAIR', 'T2w')
 
 
 class Brats(Dataset):
-    def __init__(self, patients_dir, benchmarking=False, training=True, debug=False, data_aug=False,
-                 no_seg=False, normalisation="minmax"):
+    def __init__(self,
+                 patient_dirs: List[Path],
+                 dataset_type: str,
+                 meta: pd.DataFrame,
+                 debug=False,
+                 normalisation="minmax",
+                 limit_to_series_types: Optional[Tuple] = None,
+                 normalize_contrast=True):
+        """
+        @param patient_dirs:
+            Path to each patient that should be returned by this dataset
+        @param dataset_type:
+            train, val or test
+        @param meta:
+            metadata for dataset
+            index of BraTS21ID
+        @param debug:
+        @param normalisation:
+            What normalization method to apply
+            minmax or zscore
+        @param limit_to_series_types:
+            Only use these series types, must be one of SEQUENCE_TYPES
+        @param normalize_contrast:
+            Clips high and low pixel values to normalize contrast
+        """
+        dataset_types = ('train', 'val', 'test')
+        if dataset_type not in dataset_types:
+            raise ValueError(f'dataset type {dataset_type} is not a valid '
+                             f'dataset type')
         super(Brats, self).__init__()
-        self.benchmarking = benchmarking
+        self._dataset_type = dataset_type
+        self._patient_dirs = patient_dirs
+
+        base_folder = get_base_folder(dataset_type=dataset_type)
         self.normalisation = normalisation
         self.debug = debug
-        self.data_aug = data_aug
-        self.training = training
-        self.datas = []
-        self.validation = no_seg
-        self.patterns = ["_t1", "_t1ce", "_t2", "_flair"]
-        if not no_seg:
-            self.patterns += ["_seg"]
-        for patient_dir in patients_dir:
-            patient_id = patient_dir.name
-            paths = [patient_dir / f"{patient_id}{value}.nii.gz" for value in self.patterns]
-            patient = dict(
-                id=patient_id, t1=paths[0], t1ce=paths[1],
-                t2=paths[2], flair=paths[3], seg=paths[4] if not no_seg else None
-            )
-            self.datas.append(patient)
+        self._pad_or_crop_image = True if dataset_type == 'train' else False
+        self._patient_data = get_patients_data(
+            base_folder=base_folder,
+            patient_dirs=self._patient_dirs,
+            dataset_type=dataset_type
+        )
+        self._meta = meta
+        self._normalize_contrast = normalize_contrast
+
+        def _validate_limit_to_series_types(series_types):
+            for st in series_types:
+                if st not in SEQUENCE_TYPES:
+                    raise ValueError(
+                        f'Series type must be in {SEQUENCE_TYPES}')
+
+        if limit_to_series_types:
+            _validate_limit_to_series_types(series_types=limit_to_series_types)
+            self._limit_to_series_types = limit_to_series_types
+        else:
+            # Use all sequence types
+            self._limit_to_series_types = SEQUENCE_TYPES
 
     def __getitem__(self, idx):
-        _patient = self.datas[idx]
-        patient_image = {key: self.load_nii(_patient[key]) for key in _patient if key not in ["id", "seg"]}
-        if _patient["seg"] is not None:
-            patient_label = self.load_nii(_patient["seg"])
-        if self.normalisation == "minmax":
-            patient_image = {key: irm_min_max_preprocess(patient_image[key]) for key in patient_image}
-        elif self.normalisation == "zscore":
-            patient_image = {key: zscore_normalise(patient_image[key]) for key in patient_image}
-        patient_image = np.stack([patient_image[key] for key in patient_image])
-        if _patient["seg"] is not None:
-            et = patient_label == 4
-            et_present = 1 if np.sum(et) >= 1 else 0
-            tc = np.logical_or(patient_label == 4, patient_label == 1)
-            wt = np.logical_or(tc, patient_label == 2)
-            patient_label = np.stack([et, tc, wt])
-        else:
-            patient_label = np.zeros(patient_image.shape)  # placeholders, not gonna use it
-            et_present = 0
-        if self.training:
-            # Remove maximum extent of the zero-background to make future crop more useful
-            z_indexes, y_indexes, x_indexes = np.nonzero(np.sum(patient_image, axis=0) != 0)
-            # Add 1 pixel in each side
-            zmin, ymin, xmin = [max(0, int(np.min(arr) - 1)) for arr in (z_indexes, y_indexes, x_indexes)]
-            zmax, ymax, xmax = [int(np.max(arr) + 1) for arr in (z_indexes, y_indexes, x_indexes)]
-            patient_image = patient_image[:, zmin:zmax, ymin:ymax, xmin:xmax]
-            patient_label = patient_label[:, zmin:zmax, ymin:ymax, xmin:xmax]
-            # default to 128, 128, 128
-            patient_image, patient_label = pad_or_crop_image(patient_image, patient_label, target_size=(128, 128, 128))
-        else:
-            z_indexes, y_indexes, x_indexes = np.nonzero(np.sum(patient_image, axis=0) != 0)
-            # Add 1 pixel in each side
-            zmin, ymin, xmin = [max(0, int(np.min(arr) - 1)) for arr in (z_indexes, y_indexes, x_indexes)]
-            zmax, ymax, xmax = [int(np.max(arr) + 1) for arr in (z_indexes, y_indexes, x_indexes)]
-            patient_image = patient_image[:, zmin:zmax, ymin:ymax, xmin:xmax]
-            patient_label = patient_label[:, zmin:zmax, ymin:ymax, xmin:xmax]
-        patient_image, patient_label = patient_image.astype("float16"), patient_label.astype("bool")
-        patient_image, patient_label = [torch.from_numpy(x) for x in [patient_image, patient_label]]
-        return dict(patient_id=_patient["id"],
-                    image=patient_image, label=patient_label,
-                    seg_path=str(_patient["seg"]) if not self.validation else str(_patient["t1"]),
-                    crop_indexes=((zmin, zmax), (ymin, ymax), (xmin, xmax)),
-                    et_present=et_present,
-                    supervised=True,
-                    )
+        patient = self._patient_data[idx]
+        patient_data = self._load_series_for_patient(patient=patient)
+        patient_data = [normalize(sequence=x) for x in patient_data]
+        mgmt_val = patient.mgmt_val if self._dataset_type in ('train',
+                                                              'val') else None
 
-    @staticmethod
-    def load_nii(path_folder):
-        return sitk.GetArrayFromImage(sitk.ReadImage(str(path_folder)))
+        # TODO WIP
+
+        # # Remove maximum extent of the zero-background to make future crop
+        # # more useful
+        # z_indexes, y_indexes, x_indexes = np.nonzero(
+        #     np.sum(patient_data, axis=0) != 0)
+        #
+        # # Add 1 pixel on each side
+        # zmin, ymin, xmin = [max(0, int(np.min(arr) - 1)) for arr in
+        #                     (z_indexes, y_indexes, x_indexes)]
+        # zmax, ymax, xmax = [int(np.max(arr) + 1) for arr in
+        #                     (z_indexes, y_indexes, x_indexes)]
+        # patient_image = patient_image[:, zmin:zmax, ymin:ymax, xmin:xmax]
+        # patient_label = patient_label[:, zmin:zmax, ymin:ymax, xmin:xmax]
+        #
+        # if self._pad_or_crop_image:
+        #     # default to 128, 128, 128
+        #     patient_image, patient_label = pad_or_crop_image(patient_image, patient_label, target_size=(128, 128, 128))
+        #
+        # patient_image, patient_label = patient_image.astype("float16"), patient_label.astype("bool")
+        # patient_image, patient_label = [torch.from_numpy(x) for x in [patient_image, patient_label]]
+        # return dict(
+        #     patient_id=patient["id"],
+        #     image=patient_image,
+        #     label=patient_label,
+        #     crop_indexes=((zmin, zmax), (ymin, ymax), (xmin, xmax)),
+        #     et_present=et_present,
+        #     supervised=True)
+        return patient_data, mgmt_val
+
+    def _load_series_for_patient(self, patient: Patient) -> List[np.ndarray]:
+        res = []
+        for series_type in self._limit_to_series_types:
+
+            im_paths = get_patient_slice_paths(patient=patient,
+                                               modality=series_type)
+
+            im = io.imread(str(im_paths[0]))
+            x = np.array(len(im_paths), *im.shape)
+            x[0] = im
+
+            for i in range(1, len(im_paths)):
+                x[i] = io.imread(str(im_paths[i]))
+            res.append(x)
+        return res
 
     def __len__(self):
-        return len(self.datas) if not self.debug else 3
+        return len(self._patient_data) if not self.debug else 3
 
 
-def get_datasets(seed, debug, no_seg=False, on="train", full=False,
-                 fold_number=0, normalisation="minmax"):
-    base_folder = pathlib.Path(get_brats_folder(on)).resolve()
-    print(base_folder)
-    assert base_folder.exists()
-    patients_dir = sorted([x for x in base_folder.iterdir() if x.is_dir()])
-    if full:
-        train_dataset = Brats(patients_dir, training=True, debug=debug,
-                              normalisation=normalisation)
-        bench_dataset = Brats(patients_dir, training=False, benchmarking=True, debug=debug,
-                              normalisation=normalisation)
+def get_datasets(seed, debug=False, train_val_split=False, test=False,
+                 fold_number=0, normalisation="minmax",
+                 limit_to_imaging_plane: Optional[str] = None,
+                 limit_to_series_types: Optional[Tuple[str]] = None):
+    if train_val_split and test:
+        raise ValueError('Set either train_val_split to return train and '
+                         'validation sets or test to return a test set')
+
+    dataset_type = 'test' if test else 'train'
+    base_folder = get_base_folder(
+        dataset_type=dataset_type)
+    patient_dirs = get_patient_dirs(base_folder=base_folder)
+    patient_meta = get_meta(path=base_folder / dataset_type,
+                            dataset=dataset_type)
+
+    def _filter_to_imaging_plane(imaging_plane: str, patient_dirs: List[Path]):
+        if imaging_plane not in IMAGING_PLANES:
+            raise ValueError(f'Imaging plane must be in {IMAGING_PLANES}')
+        filtered = patient_meta[
+            patient_meta['imaging_plane'] == limit_to_imaging_plane]
+        patient_ids = filtered.index.unique()
+        patient_dirs = [x for x in patient_dirs if x.name in patient_ids]
+        return patient_dirs
+
+    if limit_to_imaging_plane:
+        patient_dirs = _filter_to_imaging_plane(
+            imaging_plane=limit_to_imaging_plane, patient_dirs=patient_dirs)
+
+    if test:
+        return Brats(patient_dirs=patient_dirs, normalisation=normalisation,
+                     dataset_type='test',
+                     limit_to_series_types=limit_to_series_types)
+
+    if train_val_split:
+        kfold = KFold(5, shuffle=True, random_state=seed)
+        splits = list(kfold.split(patient_dirs))
+        train_idx, val_idx = splits[fold_number]
+        print("first idx of train", train_idx[0])
+        print("first idx of test", val_idx[0])
+        train_patient_dirs = [patient_dirs[i] for i in train_idx]
+        val_patient_dirs = [patient_dirs[i] for i in val_idx]
+        train_dataset = Brats(patient_dirs=train_patient_dirs,
+                              dataset_type='train',
+                              debug=debug,
+                              normalisation=normalisation,
+                              limit_to_series_types=limit_to_series_types,
+                              meta=patient_meta)
+        val_dataset = Brats(patient_dirs=val_patient_dirs, dataset_type='val',
+                            debug=debug,
+                            normalisation=normalisation,
+                            meta=patient_meta)
+        bench_dataset = Brats(patient_dirs=val_patient_dirs,
+                              dataset_type='val',
+                              debug=debug,
+                              normalisation=normalisation,
+                              limit_to_series_types=limit_to_series_types,
+                              meta=patient_meta)
+        return train_dataset, val_dataset, bench_dataset
+    else:
+        train_dataset = Brats(patient_dirs=patient_dirs, debug=debug,
+                              dataset_type='train',
+                              normalisation=normalisation,
+                              limit_to_series_types=limit_to_series_types,
+                              meta=patient_meta)
+        bench_dataset = Brats(patient_dirs=patient_dirs, dataset_type='train',
+                              debug=debug,
+                              normalisation=normalisation,
+                              limit_to_series_types=limit_to_series_types,
+                              meta=patient_meta)
         return train_dataset, bench_dataset
-    if no_seg:
-        return Brats(patients_dir, training=False, debug=debug,
-                     no_seg=no_seg, normalisation=normalisation)
-    kfold = KFold(5, shuffle=True, random_state=seed)
-    splits = list(kfold.split(patients_dir))
-    train_idx, val_idx = splits[fold_number]
-    print("first idx of train", train_idx[0])
-    print("first idx of test", val_idx[0])
-    train = [patients_dir[i] for i in train_idx]
-    val = [patients_dir[i] for i in val_idx]
-    # return patients_dir
-    train_dataset = Brats(train, training=True,  debug=debug,
-                          normalisation=normalisation)
-    val_dataset = Brats(val, training=False, data_aug=False,  debug=debug,
-                        normalisation=normalisation)
-    bench_dataset = Brats(val, training=False, benchmarking=True, debug=debug,
-                          normalisation=normalisation)
-    return train_dataset, val_dataset, bench_dataset
