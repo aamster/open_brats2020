@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import pydicom
+from tqdm import tqdm
 
 from src.dataset.brats import SEQUENCE_TYPES, IMAGING_PLANES
 from src.dataset.data_io import get_patients_data, get_patient_slice_paths
@@ -38,7 +39,7 @@ def get_meta(path: Path, dataset='train') -> pd.DataFrame:
         patient_data = get_patients_data(base_folder=base_folder,
                                          patient_dirs=patients_dirs,
                                          dataset_type=dataset)
-        for p in patient_data:
+        for p in tqdm(patient_data):
             for seq in SEQUENCE_TYPES:
                 patient_slice_paths = get_patient_slice_paths(
                     patient=p, modality=seq)
@@ -53,7 +54,7 @@ def get_meta(path: Path, dataset='train') -> pd.DataFrame:
                     plane=image_plane
                 )
                 res.append({
-                    'BraTS21ID': id,
+                    'BraTS21ID': p.id,
                     'seq_type': seq,
                     'width': data.Rows,
                     'height': data.Columns,
