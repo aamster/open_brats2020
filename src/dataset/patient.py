@@ -8,13 +8,13 @@ class Patient:
                  T1w_path: Path,
                  T1wCE_path: Path,
                  FLAIR_path: Path,
-                 T2w: Path,
+                 T2w_path: Path,
                  mgmt_val: Optional[int] = None):
         self._id = id
         self._t1_path = T1w_path
         self._t1ce_path = T1wCE_path
         self._flair_path = FLAIR_path
-        self._t2_path = T2w
+        self._t2_path = T2w_path
         self._mgmt_val = mgmt_val
 
     @property
@@ -32,6 +32,10 @@ class Patient:
     @property
     def FLAIR_path(self):
         return self._flair_path
+
+    @property
+    def T2w_path(self):
+        return self._t2_path
 
     @property
     def mgmt_val(self):

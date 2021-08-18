@@ -26,7 +26,7 @@ def get_patients_data(base_folder: Path,
             id=patient_id,
             T1w_path=patient_dir / 'T1w',
             T1wCE_path=patient_dir / 'T1wCE',
-            T2w=patient_dir / 'T2w',
+            T2w_path=patient_dir / 'T2w',
             FLAIR_path=patient_dir / 'FLAIR',
             mgmt_val=mgmt_val
         )
