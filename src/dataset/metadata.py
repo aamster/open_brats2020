@@ -102,9 +102,9 @@ def _get_direction(first_slice_path: Path, last_slice_path: Path,
 
     if plane == 'coronal':
         if first_pos_y < last_pos_y:
-            direction = 'anterior to posterior'
+            direction = 'front to back'
         else:
-            direction = 'posterior to anterior'
+            direction = 'back to front'
     elif plane == 'sagittal':
         if first_pos_x < last_pos_x:
             direction = 'right to left'
@@ -112,9 +112,9 @@ def _get_direction(first_slice_path: Path, last_slice_path: Path,
             direction = 'left to right'
     elif plane == 'axial':
         if first_pos_z < last_pos_z:
-            direction = 'inferior to superior'
+            direction = 'feet to head'
         else:
-            direction = 'superior to inferior'
+            direction = 'head to feet'
     else:
         raise ValueError(f'Expected plane to be in '
                          f'{IMAGING_PLANES}')
