@@ -112,9 +112,9 @@ def _get_direction(first_slice_path: Path, last_slice_path: Path,
             direction = 'left to right'
     elif plane == 'axial':
         if first_pos_z < last_pos_z:
-            direction = 'bottom to top'
+            direction = 'inferior to superior'
         else:
-            direction = 'top to bottom'
+            direction = 'superior to inferior'
     else:
         raise ValueError(f'Expected plane to be in '
                          f'{IMAGING_PLANES}')
