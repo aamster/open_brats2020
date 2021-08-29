@@ -95,21 +95,26 @@ def _get_direction(first_slice_path: Path, last_slice_path: Path,
     first_pos_x, first_pos_y, first_pos_z = positions[0]
     last_pos_x, last_pos_y, last_pos_z = positions[-1]
 
+    # in DICOM:
+    # x increases from right to left
+    # y increases from anterior to posterior
+    # z increases from inferior to superior
+
     if plane == 'coronal':
         if first_pos_y < last_pos_y:
-            direction = 'front to back'
+            direction = 'anterior to posterior'
         else:
-            direction = 'back to front'
+            direction = 'posterior to anterior'
     elif plane == 'sagittal':
         if first_pos_x < last_pos_x:
-            direction = 'left to right'
-        else:
             direction = 'right to left'
-    elif plane == 'axial':
-        if first_pos_z > last_pos_z:
-            direction = 'top to bottom'
         else:
+            direction = 'left to right'
+    elif plane == 'axial':
+        if first_pos_z < last_pos_z:
             direction = 'bottom to top'
+        else:
+            direction = 'top to bottom'
     else:
         raise ValueError(f'Expected plane to be in '
                          f'{IMAGING_PLANES}')
